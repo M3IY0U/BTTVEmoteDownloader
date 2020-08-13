@@ -1,77 +1,95 @@
 ﻿using System;
 using System.IO;
-using System.Linq;
 using System.Net;
+using System.Linq;
+using Newtonsoft.Json;
 using System.Threading.Tasks;
-using OpenQA.Selenium;
-using OpenQA.Selenium.Firefox;
-using OpenQA.Selenium.Support.UI;
 
 namespace BTTVEmoteDownloader
 {
     class Program
     {
-        private static string _channel;
+        private static string _channelName;
         private static bool _discordCompatible;
-        static async Task Main(string[] args)
+
+        private static async Task Main()
         {
-            if (args.Length < 1)
-            {
-                Console.WriteLine("ID missing. Usage: dotnet run [id on bttv]");
-                return;
-            }
+            Console.Write("Enter channel name: ");
+            _channelName = Console.ReadLine();
+            Console.Write("Would you like to save images discord-compatible (below 256kb)? (y/n): ");
+            _discordCompatible = Console.ReadLine()?.ToLower() == "y";
 
-            if (args.Length == 2 && args[1] == "discord")
-                _discordCompatible = true;
+            var id = ConvertNameToTwitchId(_channelName);
+            var channel = GetBttvChannel(id);
 
-            // Fetch names and urls
-            var driver = new FirefoxDriver();
-            driver.Navigate().GoToUrl($@"https://betterttv.com/users/{args[0]}");
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
-            wait.Until(x => x.PageSource.Contains("EmoteCards_emoteCards__1lpxg"));
-            var emotes = driver.FindElementByClassName("EmoteCards_emoteCards__1lpxg");
-            var cards = emotes.FindElements(By.ClassName("EmoteCards_emoteCard__Z9ryt"));
-            var list = cards.Select(card => new Emote(card)).ToList();
-            _channel = $"{driver.Title.Substring(driver.Title.IndexOf('-') + 1)}";
-            driver.Close();
+            var emotes = channel.ChannelEmotes
+                .Select(x => new Emote(x.Code, x.Id, x.ImageType)).ToList();
+
+            emotes.AddRange(channel.SharedEmotes
+                .Select(x => new Emote(x.Code, x.Id, x.ImageType)));
 
             // Create folder
-            Directory.CreateDirectory(_channel);
+            Directory.CreateDirectory(_channelName);
 
-            var tasks = list.Select(DownloadEmoteAsync);
+            var tasks = emotes.Select(DownloadEmoteAsync);
             await Task.WhenAll(tasks);
+        }
+
+        private static Channel GetBttvChannel(long id)
+        {
+            var request = (HttpWebRequest) WebRequest.Create($"https://api.betterttv.net/3/cached/users/twitch/{id}");
+            var response = (HttpWebResponse) request.GetResponse();
+            using var sr = new StreamReader(response.GetResponseStream() ?? throw new Exception("was"));
+            var result = sr.ReadToEnd();
+            return JsonConvert.DeserializeObject<Channel>(result);
+        }
+
+        private static long ConvertNameToTwitchId(string name)
+        {
+            // tytyty https://github.com/swiftyspiffy/Twitch-Username-and-User-ID-Translator/
+            var request = (HttpWebRequest) WebRequest.Create($"https://api.twitch.tv/kraken/users?login={name}");
+            request.Headers["Accept"] = "application/vnd.twitchtv.v5+json";
+            request.Headers["Client-ID"] = "abe7gtyxbr7wfcdftwyi9i5kej3jnq"; // not my client id lmao
+            var response = (HttpWebResponse) request.GetResponse();
+            using var sr = new StreamReader(response.GetResponseStream() ??
+                                            throw new Exception(
+                                                "what (something went wrong trying to read the response stream)"));
+            var result = sr.ReadToEnd();
+            var twitchResponse = JsonConvert.DeserializeObject<dynamic>(result);
+            return twitchResponse["users"][0]["_id"];
         }
 
         private static Task DownloadEmoteAsync(Emote emote)
         {
-            Console.WriteLine($"Downloading emote \"{emote.Name}\" with size {emote.Link[^2]}.");
-           // Retrieve emote data
-            var request = (HttpWebRequest) WebRequest.Create(emote.Link);
+            Console.WriteLine($"Downloading emote \"{emote.Name}\" with size {emote.Url[^2]}.");
+            // Retrieve emote data
+            var request = (HttpWebRequest) WebRequest.Create(emote.Url);
             using var response = (HttpWebResponse) request.GetResponse();
             var responseStream = response.GetResponseStream();
-            var basePath = $"{_channel}";
-            var fn = $"{emote.Name}.{response.ContentType.Substring(response.ContentType.LastIndexOf('/') + 1)}";
+            var basePath = $"{_channelName}";
+            var fn = $"{emote.Name}.{emote.Type}";
             // Save emote data
             using var fileStream = File.Create(Path.Combine(basePath, fn));
             responseStream?.CopyTo(fileStream);
-            
+
             // Check if emote is intended for discord
-            if(!_discordCompatible)
+            if (!_discordCompatible)
                 return Task.CompletedTask;
-            if (fileStream.Length <= 256000) 
+            if (fileStream.Length <= 256000)
                 return Task.CompletedTask;
-            
+
             Console.WriteLine("Larger than 256kb. Retrying...");
             fileStream.Close();
-            var smallerSize = int.Parse(emote.Link[^2].ToString()) - 1;
+            var smallerSize = int.Parse(emote.Url[^2].ToString()) - 1;
             if (smallerSize == 0)
             {
-                // Give up if we already were at the smallest size
+                // Give up if already at the smallest size
                 Console.WriteLine($"Creating Emote {emote.Name} failed!");
                 return Task.CompletedTask;
             }
+
             // Update URL and try again
-            emote.Link = emote.Link.Replace($"{smallerSize + 1}x", $"{smallerSize}x");
+            emote.Url = emote.Url.Replace($"{smallerSize + 1}x", $"{smallerSize}x");
             DownloadEmoteAsync(emote);
             return Task.CompletedTask;
         }
@@ -80,14 +98,14 @@ namespace BTTVEmoteDownloader
     internal class Emote
     {
         public readonly string Name;
-        public string Link;
+        public readonly string Type;
+        public string Url;
 
-        public Emote(IWebElement element)
+        public Emote(string name, string id, string type)
         {
-            Name = element.Text.Contains("\r") ? element.Text.Remove(element.Text.IndexOf('\r')) : element.Text;
-            var id = element.GetProperty("href");
-            if (id.Contains('/')) id = id.Substring(id.LastIndexOf('/') + 1);
-            Link = $"https://cdn.betterttv.net/emote/{id}/3x";
+            Name = name;
+            Url = $"https://cdn.betterttv.net/emote/{id}/3x";
+            Type = type;
         }
     }
 }

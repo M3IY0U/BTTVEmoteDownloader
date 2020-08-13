@@ -1,9 +1,15 @@
 # BTTV Emote Downloader
-Basic tool to download all bttv emotes of a channel at once.
+Basic tool to download all bttv emotes of a channel at once with an option to get versions below the discord emote size limit. 
 ### Usage
-Clone the repo and run 
-`dotnet run <id> [discord]` in the cloned folder.
-> Where `id` is the id at the end of a bttv channel page. ![Example ID](https://i.imgur.com/XACL5YH.png)\
-And `discord` is literally just the optional string "discord" to indicate whether you want emotes that are <256kb so you can upload them to a discord server or not.
+Download the corresponding release in the [Releases](https://github.com/M3IY0U/BTTVEmoteDownloader/releases) tab and run it.
 
-So `dotnet run 5b0ff7e982acd052d9f5c7d1 discord` would download all bttv emotes from [Nalian](https://twitch.tv/nalian)'s channel and save them with a size lower than 256kb.
+Or clone the repo and run 
+`dotnet run` in the cloned folder.
+
+### Screenshots
+\
+![Step 1](https://i.imgur.com/Tm91Itv.png)
+
+![Step 2](https://i.imgur.com/9CbjsHz.png)
+
+![Step 3](https://i.imgur.com/QF5UQ3a.png)
